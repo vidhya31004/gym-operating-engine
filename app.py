@@ -1,314 +1,260 @@
+# =====================================================
+# GYM COMMAND CENTRE
+# =====================================================
+
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-from datetime import date
 import os
-import re
+from openpyxl import load_workbook
+import yaml
+from yaml.loader import SafeLoader
+import streamlit_authenticator as stauth
 
-
-# =====================================================
-# PAGE
-# =====================================================
-st.set_page_config(layout="wide")
-st.title("🏋️ Gym Operating System")
-
-
-# =====================================================
-# PATHS
-# =====================================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_PATH = os.path.join(BASE_DIR, "data")
-
-ENGINE_FILE = os.path.join(
-    DATA_PATH,
-    "studio_decision_engine_v1.xlsx"
+# -----------------------------------------------------
+# PAGE CONFIG
+# -----------------------------------------------------
+st.set_page_config(
+    page_title="Gym Command Centre",
+    layout="wide"
 )
 
-CLIENT_FILE = os.path.join(
-    DATA_PATH,
-    "client_database.xlsx"
+# =====================================================
+# LOGIN SYSTEM
+# =====================================================
+with open("config.yaml") as file:
+    config = yaml.load(file, Loader=SafeLoader)
+
+authenticator = stauth.Authenticate(
+    config["credentials"],
+    config["cookie"]["name"],
+    config["cookie"]["key"],
+    config["cookie"]["expiry_days"]
 )
 
+authenticator.login(location="main")
+
+authentication_status = st.session_state.get("authentication_status")
+name = st.session_state.get("name")
+username = st.session_state.get("username")
 
 # =====================================================
-# LOAD DATA
+# LOGIN CHECK
 # =====================================================
-@st.cache_data
-def load():
+if authentication_status is False:
+    st.error("Username/password incorrect")
 
-    time_engine = pd.read_excel(
-        ENGINE_FILE,
-        sheet_name="TIME_ENGINE",
-        header=None,
-        engine="openpyxl"
-    ).fillna("")
+elif authentication_status is None:
+    st.warning("Please login")
 
-    dashboard = pd.read_excel(
-        ENGINE_FILE,
-        sheet_name="DASHBOARD",
-        header=None,
-        engine="openpyxl"
-    ).fillna("")
+elif authentication_status:
 
-    session = pd.read_excel(
-        CLIENT_FILE,
-        sheet_name="SESSION_LOG",
-        engine="openpyxl"
+    authenticator.logout("Logout","sidebar")
+    st.sidebar.success(f"Welcome {name}")
+
+    st.title("🏋️ Gym Command Centre")
+
+    DATA_PATH="data"
+
+    DECISION_FILE=os.path.join(
+        DATA_PATH,"studio_decision_engine_v1.xlsx"
     )
 
-    return time_engine, dashboard, session
-
-
-time_engine, dashboard, session_log = load()
-
-
-# =====================================================
-# HELPERS
-# =====================================================
-def clean(x):
-    return re.sub(r"[^a-z0-9 ]", "", str(x).lower())
-
-
-def to_number(v):
-
-    if isinstance(v, (int, float)):
-        return v
-
-    v = str(v).replace("₹", "").replace(",", "").replace("%", "")
-
-    try:
-        return float(v)
-    except:
-        return None
-
-
-# =====================================================
-# METRIC SCANNER
-# =====================================================
-def scan_sheet(sheet, words):
-
-    rows, cols = sheet.shape
-
-    for r in range(rows):
-        for c in range(cols):
-
-            cell = clean(sheet.iloc[r, c])
-
-            if all(w in cell for w in words):
-
-                # RIGHT
-                for i in range(1,6):
-                    if c+i < cols:
-                        num = to_number(sheet.iloc[r, c+i])
-                        if num is not None:
-                            return num
-
-                # DOWN
-                for i in range(1,6):
-                    if r+i < rows:
-                        num = to_number(sheet.iloc[r+i, c])
-                        if num is not None:
-                            return num
-
-                # TEXT VALUE
-                for i in range(1,4):
-                    if c+i < cols:
-                        val = sheet.iloc[r, c+i]
-                        if isinstance(val,str) and val.strip():
-                            return val
-
-    return None
-
-
-def find_metric(label):
-
-    words = clean(label).split()
-
-    val = scan_sheet(time_engine, words)
-    if val is not None:
-        return val
-
-    val = scan_sheet(dashboard, words)
-    if val is not None:
-        return val
-
-    return 0
-
-
-# =====================================================
-# CLEAN SESSION DATA
-# =====================================================
-session_log.columns = (
-    session_log.columns
-    .astype(str)
-    .str.strip()
-    .str.lower()
-    .str.replace(" ", "_")
-)
-
-client_col = [c for c in session_log.columns if "client" in c][0]
-trainer_col = [c for c in session_log.columns if "trainer" in c][0]
-date_col = [c for c in session_log.columns if "date" in c][0]
-weight_col = [c for c in session_log.columns if "weight" in c][0]
-perf_col = [c for c in session_log.columns if "performance" in c][0]
-
-session_log[date_col] = pd.to_datetime(
-    session_log[date_col],
-    errors="coerce"
-)
-
-
-# =====================================================
-# SIDEBAR
-# =====================================================
-page = st.sidebar.selectbox(
-    "Navigation",
-    ["Dashboard","Client Analytics","Log Session"]
-)
-
-
-# =====================================================
-# DASHBOARD
-# =====================================================
-if page == "Dashboard":
-
-    st.header("📊 Studio Command Center")
-
-    r1 = st.columns(7)
-
-    r1[0].metric("Active Clients",
-        int(find_metric("active clients")))
-
-    r1[1].metric("Monthly Revenue",
-        f"₹{find_metric('monthly revenue'):,.0f}")
-
-    r1[2].metric("Revenue / Hour",
-        f"₹{find_metric('revenue per hour'):,.0f}")
-
-    r1[3].metric("Average Utilization",
-        f"{find_metric('average utilization')*100:.1f}%")
-
-    r1[4].metric("Overload Events",
-        int(find_metric("overload")))
-
-    r1[5].metric("Capacity Utilization",
-        f"{find_metric('capacity utilization')*100:.1f}%")
-
-    r1[6].metric("Revenue Realization",
-        f"{find_metric('revenue realization')*100:.0f}%")
-
-    st.divider()
-
-    r2 = st.columns(6)
-
-    r2[0].metric("Monthly Profit",
-        f"₹{find_metric('monthly profit'):,.0f}")
-
-    r2[1].metric("Profit / Hour",
-        f"₹{find_metric('profit per hour'):,.0f}")
-
-    r2[2].metric("Break Even Clients",
-        int(find_metric("break even")))
-
-    r2[3].metric("Profit Margin",
-        f"{find_metric('profit margin')*100:.0f}%")
-
-    r2[4].metric("Capacity Pressure",
-        f"{find_metric('capacity pressure')*100:.0f}%")
-
-    r2[5].metric("Operational Status",
-        find_metric("operational status"))
-
-
-# =====================================================
-# CLIENT ANALYTICS
-# =====================================================
-elif page == "Client Analytics":
-
-    clients = session_log[client_col].dropna().unique()
-
-    selected = st.selectbox("Client", clients)
-
-    data = session_log[
-        session_log[client_col] == selected
-    ]
-
-    c1, c2 = st.columns(2)
-
-    c1.plotly_chart(
-        px.line(data, x=date_col, y=weight_col,
-        markers=True, title="Weight Progress"),
-        use_container_width=True)
-
-    c2.plotly_chart(
-        px.line(data, x=date_col, y=perf_col,
-        markers=True, title="Performance"),
-        use_container_width=True)
-
-
-# =====================================================
-# LOG SESSION
-# =====================================================
-elif page == "Log Session":
-
-    st.header("📝 Log Training Session")
-
-    clients = session_log[client_col].dropna().unique()
-    trainers = session_log[trainer_col].dropna().unique()
-
-    client = st.selectbox("Client", clients)
-    trainer = st.selectbox("Trainer", trainers)
-
-    weight = float(st.text_input("Weight", "0"))
-
-    sessions_done = st.selectbox(
-        "Sessions Done",
-        list(range(1,31))
+    MONTH_FILE=os.path.join(
+        DATA_PATH,"monthly_sessions.xlsx"
     )
 
-    progress_type = st.selectbox(
-        "Progress Type",
-        ["Strength Gain",
-         "Weight Loss",
-         "Mobility",
-         "Endurance",
-         "General"]
+    ATT_FILE=os.path.join(
+        DATA_PATH,"attendance_log.xlsx"
     )
 
-    performance = st.slider(
-        "Performance Score",1,10)
+# =====================================================
+# CLEAN NUMBER
+# =====================================================
+    def clean_number(val):
 
-    notes = st.text_area("Notes")
+        if val is None:
+            return 0
 
-    if st.button("Save Session"):
+        if isinstance(val,(int,float)):
+            if 0 < val < 1:
+                return val*100
+            return float(val)
 
-        new_row = {
-            date_col: date.today(),
-            client_col: client,
-            trainer_col: trainer,
-            weight_col: weight,
-            "session_done": sessions_done,
-            "progress_type": progress_type,
-            perf_col: performance,
-            "notes": notes
-        }
+        val=str(val).replace("₹","").replace(",","")
 
-        session_log.loc[len(session_log)] = new_row
+        try:
+            num=float(val)
+            if 0<num<1:
+                num*=100
+            return num
+        except:
+            return 0
 
-        with pd.ExcelWriter(
-            CLIENT_FILE,
-            engine="openpyxl",
-            mode="a",
-            if_sheet_exists="replace"
-        ) as writer:
 
-            session_log.to_excel(
-                writer,
-                sheet_name="SESSION_LOG",
-                index=False
-            )
+# =====================================================
+# KPI MAP
+# =====================================================
+    METRIC_MAP={
+        "ACTIVE CLIENTS":"active",
+        "MONTHLY REVENUE":"revenue",
+        "REVENUE PER HOUR":"rev_hour",
+        "AVERAGE UTILIZATION":"util",
+        "MONTHLY PROFIT":"profit",
+        "PROFIT MARGIN":"margin",
+        "CAPACITY UTILIZATION VALUE":"cap_util",
+        "REVENUE REALIZATION":"rev_real",
+        "BREAK-EVEN CLIENT COUNT":"breakeven"
+    }
 
-        st.cache_data.clear()
-        st.success("✅ Session Saved")
 
-        st.rerun()
+    def extract_dashboard(sheet):
+
+        results={}
+
+        for row in sheet.iter_rows():
+            for cell in row:
+
+                if isinstance(cell.value,str):
+
+                    label=cell.value.strip().upper()
+
+                    if label in METRIC_MAP:
+
+                        col=cell.column
+                        start=cell.row+1
+
+                        for r in range(start,start+6):
+
+                            val=sheet.cell(r,col).value
+
+                            if isinstance(val,(int,float)):
+                                results[
+                                    METRIC_MAP[label]
+                                ]=clean_number(val)
+                                break
+        return results
+
+
+# =====================================================
+# KPI BOX UI (RESTORED)
+# =====================================================
+    def kpi_box(title,value):
+
+        st.markdown(f"""
+        <div style="
+            background-color:#111827;
+            padding:22px;
+            border-radius:14px;
+            border:1px solid #374151;
+            text-align:center;">
+            <h4 style="color:#9CA3AF;">
+                {title}
+            </h4>
+            <h2 style="color:white;">
+                {value}
+            </h2>
+        </div>
+        """,unsafe_allow_html=True)
+
+
+# =====================================================
+# DATA LOADERS
+# =====================================================
+    def load_month():
+
+        cols=["Client","Month","Total_Sessions"]
+
+        if os.path.exists(MONTH_FILE):
+            df=pd.read_excel(MONTH_FILE)
+            if df.empty:
+                df=pd.DataFrame(columns=cols)
+        else:
+            df=pd.DataFrame(columns=cols)
+
+        return df
+
+
+    def save_month(df):
+        df.to_excel(MONTH_FILE,index=False)
+
+
+    def load_att():
+
+        cols=["Client","Month","Session_No","Status"]
+
+        if os.path.exists(ATT_FILE):
+            df=pd.read_excel(ATT_FILE)
+            if df.empty:
+                df=pd.DataFrame(columns=cols)
+        else:
+            df=pd.DataFrame(columns=cols)
+
+        return df
+
+
+    def save_att(df):
+        df.to_excel(ATT_FILE,index=False)
+
+
+# =====================================================
+# NAVIGATION
+# =====================================================
+    pages=["Attendance","Month Setup"]
+
+    if username=="aadhi":
+        pages.insert(0,"Dashboard")
+
+    page=st.sidebar.selectbox("Navigation",pages)
+
+# =====================================================
+# DASHBOARD ✅ FIXED
+# =====================================================
+    if page=="Dashboard":
+
+        st.header("📊 Studio Dashboard")
+
+        wb=load_workbook(
+            DECISION_FILE,
+            data_only=True
+        )
+
+        ws=wb["DASHBOARD"]
+        m=extract_dashboard(ws)
+
+        r1=st.columns(4)
+
+        with r1[0]:
+            kpi_box("Active Clients",int(m.get("active",0)))
+
+        with r1[1]:
+            kpi_box("Monthly Revenue",
+                    f"₹{m.get('revenue',0):,.0f}")
+
+        with r1[2]:
+            kpi_box("Revenue / Hour",
+                    f"₹{m.get('rev_hour',0):,.0f}")
+
+        with r1[3]:
+            kpi_box("Utilization",
+                    f"{m.get('util',0):.0f}%")
+
+        r2=st.columns(4)
+
+        with r2[0]:
+            kpi_box("Monthly Profit",
+                    f"₹{m.get('profit',0):,.0f}")
+
+        with r2[1]:
+            kpi_box("Profit Margin",
+                    f"{m.get('margin',0):.0f}%")
+
+        with r2[2]:
+            kpi_box("Capacity Utilization",
+                    f"{m.get('cap_util',0):.0f}%")
+
+        with r2[3]:
+            kpi_box("Revenue Realization",
+                    f"{m.get('rev_real',0):.0f}%")
+
+        kpi_box("Break-even Clients",
+                int(m.get("breakeven",0)))
